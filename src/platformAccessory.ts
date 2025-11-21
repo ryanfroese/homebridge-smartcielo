@@ -47,6 +47,9 @@ export class CieloPlatformAccessory {
 
     this.service
       .getCharacteristic(this.platform.Characteristic.TargetHeatingCoolingState)
+      .setProps({
+        validValues: [0, 1, 2, 3], // OFF, HEAT, COOL, AUTO
+      })
       .onGet(this.getTargetHeatingCoolingState.bind(this))
       .onSet(this.setTargetHeatingCoolingState.bind(this));
 
@@ -100,10 +103,10 @@ export class CieloPlatformAccessory {
 
   async setTargetHeatingCoolingState(state: CharacteristicValue) {
     const mode = this.convertHeatingCoolingStateToMode(state);
-    this.platform.log.debug('setTargetHeatingCoolingState', mode);
+    this.platform.log.info('setTargetHeatingCoolingState called - state:', state, 'mode:', mode, 'current power:', this.hvac.getPower());
     if (mode === 'off') {
       if (this.hvac.getPower() === 'off') {
-        this.platform.log.debug('Skipping Command');
+        this.platform.log.info('Skipping power off command - already off');
       } else {
         this.platform.log.info('Sending power off');
         await this.hvac.powerOff(this.platform.hvacAPI);
