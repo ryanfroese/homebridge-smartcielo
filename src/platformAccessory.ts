@@ -11,6 +11,7 @@ import {CieloHVAC} from 'node-smartcielo-ws';
 export class CieloPlatformAccessory {
   private service: Service;
   private temperatureDisplayUnits = 1;
+  private detectedTemperatureUnit: 'F' | 'C' | null = null;
 
   constructor(
     private readonly platform: CieloHomebridgePlatform,
@@ -80,13 +81,13 @@ export class CieloPlatformAccessory {
   async getCurrentTemperature(): Promise<CharacteristicValue> {
     const temperature = this.hvac.getRoomTemperature();
     this.platform.log.debug('getCurrentTemperature', temperature);
-    return this.convertFahrenheitToCelsius(temperature);
+    return this.convertApiTemperatureToCelsius(temperature);
   }
 
   async getTargetTemperature(): Promise<CharacteristicValue> {
     const temperature = this.hvac.getTemperature();
     this.platform.log.debug('getTargetTemperature', temperature);
-    return this.convertFahrenheitToCelsius(temperature);
+    return this.convertApiTemperatureToCelsius(temperature);
   }
 
   async getTemperatureDisplayUnits(): Promise<CharacteristicValue> {
@@ -130,24 +131,30 @@ export class CieloPlatformAccessory {
   }
 
   async setTargetTemperature(temperature: CharacteristicValue) {
-    const temperatureInFahrenheit = this.convertCelsiusToFahrenheit(
-      temperature,
-      62,
-      86,
-    );
-    this.platform.log.debug('setTargetTemperature', temperatureInFahrenheit);
-    if (this.hvac.getTemperature() === temperature) {
+    // HomeKit always sends temperature in Celsius
+    // We need to convert it to whatever unit the API expects (detected earlier)
+    let apiTemperature: number;
+
+    if (this.detectedTemperatureUnit === 'C') {
+      // API expects Celsius, clamp to reasonable range
+      apiTemperature = Math.min(Math.max(Math.round(temperature as number), 15), 35);
+      this.platform.log.debug('setTargetTemperature (Celsius mode)', apiTemperature);
+    } else {
+      // API expects Fahrenheit, convert and clamp
+      apiTemperature = this.convertCelsiusToFahrenheit(temperature, 62, 86);
+      this.platform.log.debug('setTargetTemperature (Fahrenheit mode)', apiTemperature);
+    }
+
+    if (this.hvac.getTemperature() === apiTemperature) {
       this.platform.log.debug('Skipping Command');
     } else {
-      this.platform.log.info(
-        'Setting temperature to ' +
-          temperatureInFahrenheit +
-          ' °F / ' +
-          this.convertFahrenheitToCelsius(temperatureInFahrenheit) +
-          ' °C',
-      );
+      const displayTemp = this.detectedTemperatureUnit === 'C'
+        ? `${apiTemperature} °C`
+        : `${apiTemperature} °F / ${this.convertFahrenheitToCelsius(apiTemperature)} °C`;
+
+      this.platform.log.info('Setting temperature to ' + displayTemp);
       await this.hvac.setTemperature(
-        temperatureInFahrenheit.toString(),
+        apiTemperature.toString(),
         this.platform.hvacAPI,
       );
     }
@@ -178,6 +185,46 @@ export class CieloPlatformAccessory {
 
   private convertFahrenheitToCelsius(temperature) {
     return Math.round((((temperature - 32) * 5) / 9) * 10) / 10;
+  }
+
+  /**
+   * Auto-detect temperature unit from API based on temperature range
+   * Fahrenheit: typically 60-95°F for HVAC operation
+   * Celsius: typically 15-35°C for HVAC operation
+   */
+  private detectTemperatureUnit(temperature: number): 'F' | 'C' {
+    // If we've already detected the unit, use that
+    if (this.detectedTemperatureUnit) {
+      return this.detectedTemperatureUnit;
+    }
+
+    // Heuristic: If temperature is less than 50, it's likely Celsius
+    // (15-35°C is typical HVAC range, 60-95°F is typical HVAC range)
+    if (temperature < 50) {
+      this.platform.log.info(`Auto-detected temperature unit: Celsius (temp: ${temperature}°C)`);
+      this.detectedTemperatureUnit = 'C';
+      return 'C';
+    } else {
+      this.platform.log.info(`Auto-detected temperature unit: Fahrenheit (temp: ${temperature}°F)`);
+      this.detectedTemperatureUnit = 'F';
+      return 'F';
+    }
+  }
+
+  /**
+   * Convert API temperature to Celsius for HomeKit
+   * Auto-detects if API is returning Fahrenheit or Celsius
+   */
+  private convertApiTemperatureToCelsius(temperature: number): number {
+    const unit = this.detectTemperatureUnit(temperature);
+
+    if (unit === 'C') {
+      // API is already returning Celsius, no conversion needed
+      return Math.round(temperature * 10) / 10;
+    } else {
+      // API is returning Fahrenheit, convert to Celsius
+      return this.convertFahrenheitToCelsius(temperature);
+    }
   }
 
   private convertHeatingCoolingStateToMode(state) {
