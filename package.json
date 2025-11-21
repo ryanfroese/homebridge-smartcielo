@@ -28,7 +28,7 @@
   ],
   "dependencies": {
     "homebridge-config-ui-x": "^4.50.2",
-    "node-smartcielo-ws": "^2.0.1"
+    "node-smartcielo-ws": "^2.0.2"
   },
   "devDependencies": {
     "@types/node": "^16.10.9",
