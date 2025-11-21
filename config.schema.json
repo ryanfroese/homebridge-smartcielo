@@ -22,12 +22,12 @@
         "required": true
       },
       "macAddresses": {
-        "title": "HVAC MAC Addresses",
-        "description": "List of the MAC Addresses of each HVAC unit you want to the plugin to connect",
+        "title": "HVAC MAC Addresses (Optional)",
+        "description": "Optional: List of specific MAC Addresses to connect to. Leave empty to auto-discover ALL HVACs on your account.",
         "type": "array",
         "items": {
           "title": "MAC Address",
-          "description": "No colons, all caps",
+          "description": "No colons, all caps (e.g., C45BBEC42467)",
           "type": "string",
           "pattern": "^[A-F0-9]{12}$"
         }

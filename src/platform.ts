@@ -59,6 +59,7 @@ export class CieloHomebridgePlatform implements DynamicPlatformPlugin {
             undefined,
             { apiKey: this.config.twocaptcha_api_key },
           );
+          // Subscribe to HVACs (auto-discovers all devices if macAddresses not specified)
           await this.hvacAPI.subscribeToHVACs(this.config.macAddresses);
           // run the method to discover / register your devices as accessories
           this.discoverDevices();
@@ -81,6 +82,7 @@ export class CieloHomebridgePlatform implements DynamicPlatformPlugin {
         undefined,
         { apiKey: this.config.twocaptcha_api_key },
       );
+      // Subscribe to HVACs (auto-discovers all devices if macAddresses not specified)
       await this.hvacAPI.subscribeToHVACs(this.config.macAddresses);
       log.debug('Executed didFinishLaunching callback');
       // run the method to discover / register your devices as accessories
