@@ -31,6 +31,12 @@
           "type": "string",
           "pattern": "^[A-F0-9]{12}$"
         }
+      },
+      "twocaptcha_api_key": {
+        "title": "2Captcha API Key",
+        "type": "string",
+        "required": true,
+        "description": "Required for automatic captcha solving. Get your API key from https://2captcha.com/. Cost: ~$0.003 per solve, ~$2-3/month for 24/7 operation."
       }
     }
   }

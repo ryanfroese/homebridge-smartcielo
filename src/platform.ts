@@ -45,15 +45,19 @@ export class CieloHomebridgePlatform implements DynamicPlatformPlugin {
         this.log.info('Updated Room Temperature:', roomTemperature);
       },
       (err) => {
+        // Only reconnects on ACTUAL communication errors, not token expiration
+        // WebSocket connection stays alive much longer than token expiry
+        // This minimizes captcha costs - typically only reconnects if internet drops
         this.log.error('Communication Error:', err);
         this.log.error('Reconnecting in 30 seconds...');
         setTimeout(async () => {
-          this.log.debug('Connecting to API...');
-          await this.hvacAPI.establishConnection(
+          this.log.debug('Reconnecting to API with auto-captcha solve...');
+          await this.hvacAPI.establishConnectionWithAutoSolve(
             this.config.username,
             this.config.password,
             this.config.ip,
             undefined,
+            { apiKey: this.config.twocaptcha_api_key },
           );
           await this.hvacAPI.subscribeToHVACs(this.config.macAddresses);
           // run the method to discover / register your devices as accessories
@@ -69,12 +73,13 @@ export class CieloHomebridgePlatform implements DynamicPlatformPlugin {
     // in order to ensure they weren't added to homebridge already. This event can also be used
     // to start discovery of new accessories.
     this.api.on('didFinishLaunching', async () => {
-      this.log.debug('Connecting to API...');
-      await this.hvacAPI.establishConnection(
+      this.log.debug('Connecting to API with auto-captcha solve...');
+      await this.hvacAPI.establishConnectionWithAutoSolve(
         this.config.username,
         this.config.password,
         this.config.ip,
         undefined,
+        { apiKey: this.config.twocaptcha_api_key },
       );
       await this.hvacAPI.subscribeToHVACs(this.config.macAddresses);
       log.debug('Executed didFinishLaunching callback');
