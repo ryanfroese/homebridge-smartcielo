@@ -51,18 +51,28 @@ export class CieloHomebridgePlatform implements DynamicPlatformPlugin {
         this.log.error('Communication Error:', err);
         this.log.error('Reconnecting in 30 seconds...');
         setTimeout(async () => {
-          this.log.debug('Reconnecting to API with auto-captcha solve...');
-          await this.hvacAPI.establishConnectionWithAutoSolve(
-            this.config.username,
-            this.config.password,
-            this.config.ip,
-            undefined,
-            { apiKey: this.config.twocaptcha_api_key },
-          );
-          // Subscribe to HVACs (auto-discovers all devices if macAddresses not specified)
-          await this.hvacAPI.subscribeToHVACs(this.config.macAddresses);
-          // run the method to discover / register your devices as accessories
-          this.discoverDevices();
+          try {
+            this.log.debug('Reconnecting to API with auto-captcha solve...');
+            await this.hvacAPI.establishConnectionWithAutoSolve(
+              this.config.username,
+              this.config.password,
+              this.config.ip,
+              undefined,
+              { apiKey: this.config.twocaptcha_api_key },
+            );
+            // Subscribe to HVACs (auto-discovers all devices if macAddresses not specified)
+            await this.hvacAPI.subscribeToHVACs(this.config.macAddresses);
+            // run the method to discover / register your devices as accessories
+            this.discoverDevices();
+          } catch (reconnectErr) {
+            // Surface the underlying failure instead of silently crashing the child
+            // process with an UnhandledPromiseRejection (which also burns captcha
+            // credits on every restart cycle — see issue #10).
+            this.log.error(
+              'Reconnect attempt failed; will not burn another captcha on this cycle:',
+              reconnectErr instanceof Error ? reconnectErr.message : String(reconnectErr),
+            );
+          }
         }, 30000);
       },
     );
@@ -75,18 +85,32 @@ export class CieloHomebridgePlatform implements DynamicPlatformPlugin {
     // to start discovery of new accessories.
     this.api.on('didFinishLaunching', async () => {
       this.log.debug('Connecting to API with auto-captcha solve...');
-      await this.hvacAPI.establishConnectionWithAutoSolve(
-        this.config.username,
-        this.config.password,
-        this.config.ip,
-        undefined,
-        { apiKey: this.config.twocaptcha_api_key },
-      );
-      // Subscribe to HVACs (auto-discovers all devices if macAddresses not specified)
-      await this.hvacAPI.subscribeToHVACs(this.config.macAddresses);
-      log.debug('Executed didFinishLaunching callback');
-      // run the method to discover / register your devices as accessories
-      this.discoverDevices();
+      try {
+        await this.hvacAPI.establishConnectionWithAutoSolve(
+          this.config.username,
+          this.config.password,
+          this.config.ip,
+          undefined,
+          { apiKey: this.config.twocaptcha_api_key },
+        );
+        // Subscribe to HVACs (auto-discovers all devices if macAddresses not specified)
+        await this.hvacAPI.subscribeToHVACs(this.config.macAddresses);
+        this.log.debug('Executed didFinishLaunching callback');
+        // run the method to discover / register your devices as accessories
+        this.discoverDevices();
+      } catch (launchErr) {
+        // Previously, an exception here became an UnhandledPromiseRejection
+        // because `didFinishLaunching` returns the promise directly. The Node
+        // runtime would then terminate the child bridge process with a code-1
+        // exit, which made Homebridge restart the plugin and burn another
+        // 2captcha solve. See issue #10 for the crash loop + captcha-cost
+        // symptom. Logging the error keeps the plugin alive and keeps the
+        // operator informed instead of silently killing the bridge.
+        this.log.error(
+          'Initial connection to API failed:',
+          launchErr instanceof Error ? launchErr.message : String(launchErr),
+        );
+      }
     });
   }
 
