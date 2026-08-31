@@ -304,6 +304,36 @@ async function testQueuePowerOffSkipsOtherCommands() {
   );
 }
 
+/*
+ * The API client used to reject with a bare object, which String()'d to
+ * "[object Object]" - a real connection failure was logged with its cause
+ * erased, which cost a debugging round-trip against a live host.
+ */
+async function testNonErrorRejectionIsReadable() {
+  const {platform, log} = makePlatform(() => Promise.resolve());
+
+  platform.handleConnectFailure({code: 401, message: 'Unauthorized'});
+  platform.handleConnectFailure({weird: 'shape', nested: {a: 1}});
+
+  const text = log.text();
+  assert.ok(
+    !/\[object Object\]/.test(text),
+    'a non-Error rejection must never be logged as "[object Object]"'
+  );
+  assert.ok(
+    /401: Unauthorized/.test(text),
+    `expected the API code and message to survive; got:\n${text}`
+  );
+  assert.ok(
+    /weird/.test(text),
+    'an unrecognised object shape should still be serialized, not erased'
+  );
+
+  if (platform.reconnectTimer) {
+    clearTimeout(platform.reconnectTimer);
+  }
+}
+
 (async () => {
   console.log('platform reconnect/queue tests\n');
   await check('startup failure does not crash the bridge (issue #10)', testLaunchFailureDoesNotReject);
@@ -311,6 +341,7 @@ async function testQueuePowerOffSkipsOtherCommands() {
   await check('reconnect backoff grows exponentially', testReconnectBackoffGrows);
   await check('zero captcha balance stops retrying', testZeroBalanceStopsRetrying);
   await check('transient failure still retries', testTransientFailureStillRetries);
+  await check('non-Error rejections are readable', testNonErrorRejectionIsReadable);
   await check('offline queue merges power and mode', testQueueMergesPowerAndMode);
   await check('queued state applies power before mode', testQueueAppliesPowerFirst);
   await check('queued power-off skips mode and temperature', testQueuePowerOffSkipsOtherCommands);

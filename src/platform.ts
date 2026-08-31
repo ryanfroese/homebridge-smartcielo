@@ -53,6 +53,34 @@ const RECONNECT_BASE_MS = 30 * 1000;
 const RECONNECT_MAX_MS = 30 * 60 * 1000;
 
 /**
+ * Render any thrown value as something a human can act on.
+ *
+ * `String(err)` on a plain object yields "[object Object]", which is exactly
+ * what the API client used to reject with - so real failures were logged with
+ * their cause erased. Anything that is not an Error gets serialized instead.
+ */
+function describeError(err: unknown): string {
+  if (err instanceof Error) {
+    return err.message;
+  }
+  if (typeof err === 'string') {
+    return err;
+  }
+  if (err && typeof err === 'object') {
+    const maybe = err as {message?: unknown; code?: unknown; error?: unknown};
+    if (typeof maybe.message === 'string') {
+      return maybe.code ? `${maybe.code}: ${maybe.message}` : maybe.message;
+    }
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return Object.prototype.toString.call(err);
+    }
+  }
+  return String(err);
+}
+
+/**
  * HomebridgePlatform
  * This class is the main constructor for your plugin, this is where you should
  * parse the user config and discover/register accessories with Homebridge.
@@ -217,7 +245,7 @@ export class CieloHomebridgePlatform implements DynamicPlatformPlugin {
    * Decide whether a failed connection attempt is worth retrying.
    */
   private handleConnectFailure(err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = describeError(err);
 
     // Some failures cannot be fixed by waiting: an exhausted 2Captcha balance,
     // a wrong or banned key. Retrying those burns money the moment the account
@@ -243,7 +271,7 @@ export class CieloHomebridgePlatform implements DynamicPlatformPlugin {
     if ((err as {permanent?: boolean}).permanent === true) {
       return true;
     }
-    const message = err instanceof Error ? err.message : String(err);
+    const message = describeError(err);
     return (
       message.includes('ERROR_ZERO_BALANCE') ||
       message.includes('ERROR_WRONG_USER_KEY') ||
