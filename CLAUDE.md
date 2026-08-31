@@ -137,17 +137,20 @@ Schema defined in `config.schema.json` with validation pattern: `^[A-F0-9]{12}$`
 
 This is required because Cielo's API now uses reCAPTCHA v2 for authentication. The plugin automatically solves captchas using the 2Captcha service.
 
-**Cost:** Approximately $0.003 per captcha solve. Since v2.1.0 the library
-spends a stored refresh token on reconnect and only pays for a captcha on a
-genuinely cold start, so a healthy install costs well under $0.10/month.
+**Cost:** Approximately $0.003 per captcha solve. Since v2.2.0 the library logs
+in as an iOS client, which makes the refresh endpoint work, so a reconnect
+costs nothing. A healthy install solves **once**, not once per reconnect.
+
+Verified end to end: four consecutive connections, one captcha solve total.
 
 The WebSocket connection stays alive even after the access token expires, so
 you're not being charged hourly as you might expect.
 
 **If costs spike, look for a loop.** Every historical case traced back to a
-connection that could never succeed (see issue #12: the WebSocket host was
-wrong, so login was paid for and the socket then 403'd) combined with an
-unguarded retry.
+connection that could never succeed, combined with an unguarded retry. Two
+such causes are now fixed: the WebSocket host was wrong (issue #12), and the
+client logged in as `WEB`, whose tokens Cielo's own servers reject. See
+`API_STATUS.md` in the node-cielo repo before touching auth.
 
 ## Code Style
 
