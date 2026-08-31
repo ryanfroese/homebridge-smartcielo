@@ -1,7 +1,7 @@
 {
   "displayName": "Homebridge Cielo",
   "name": "homebridge-cielo",
-  "version": "2.0.4",
+  "version": "2.1.0",
   "description": "A Homebridge plugin for controlling Cielo Thermostats for Mini Splits using node-cielo",
   "license": "Apache-2.0",
   "repository": {
@@ -12,23 +12,23 @@
     "url": "https://github.com/ryanfroese/homebridge-smartcielo/issues"
   },
   "engines": {
-    "node": ">=18.0.0",
-    "homebridge": ">=1.3.5"
+    "node": "^18.20.0 || ^20.18.0 || ^22.10.0 || ^24.0.0",
+    "homebridge": "^1.6.0 || ^2.0.0"
   },
   "main": "dist/index.js",
   "scripts": {
     "lint": "eslint src/**.ts --max-warnings=0",
     "watch": "npm run build && npm link && nodemon",
     "build": "rimraf ./dist && tsc",
-    "prepublishOnly": "npm run lint && npm run build"
+    "prepublishOnly": "npm run lint && npm run build && node tests/platform.test.js",
+    "test": "npm run build && node tests/platform.test.js"
   },
   "keywords": [
     "homebridge-plugin",
     "cielo"
   ],
   "dependencies": {
-    "homebridge-config-ui-x": "^4.50.2",
-    "node-smartcielo-ws": "^2.0.3"
+    "node-smartcielo-ws": "^2.1.0"
   },
   "devDependencies": {
     "@types/node": "^16.10.9",
@@ -40,5 +40,11 @@
     "rimraf": "^3.0.2",
     "ts-node": "^10.3.0",
     "typescript": "^4.4.4"
-  }
+  },
+  "files": [
+    "dist",
+    "config.schema.json",
+    "README.md",
+    "LICENSE"
+  ]
 }

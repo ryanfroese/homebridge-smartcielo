@@ -1,6 +1,6 @@
 import {Service, PlatformAccessory, CharacteristicValue} from 'homebridge';
 
-import {CieloHomebridgePlatform} from './platform';
+import {CieloHomebridgePlatform, ConnectionState} from './platform';
 import {CieloHVAC} from 'node-smartcielo-ws';
 
 /**
@@ -104,32 +104,73 @@ export class CieloPlatformAccessory {
   async setTargetHeatingCoolingState(state: CharacteristicValue) {
     const mode = this.convertHeatingCoolingStateToMode(state);
     this.platform.log.info('setTargetHeatingCoolingState called - state:', state, 'mode:', mode, 'current power:', this.hvac.getPower());
-    if (mode === 'off') {
-      if (this.hvac.getPower() === 'off') {
-        this.platform.log.info('Skipping power off command - already off');
+
+    // Pre-emptive check: if not connected, record the intent and return.
+    // Fields merge, so a power-on and a mode change both survive - the old
+    // queue held one action per device and silently dropped the power-on.
+    if (this.platform.connectionState !== ConnectionState.CONNECTED) {
+      this.platform.log.warn('Not connected - queueing command');
+      if (mode === 'off') {
+        this.platform.queueDesiredState(this.hvac.getMacAddress(), {power: 'off'});
       } else {
-        this.platform.log.info('Sending power off');
-        await this.hvac.powerOff(this.platform.hvacAPI);
+        this.platform.queueDesiredState(this.hvac.getMacAddress(), {power: 'on', mode});
       }
-    } else {
-      if (this.hvac.getPower() === 'on' && this.hvac.getMode() === mode) {
-        this.platform.log.debug('Skipping Command');
-      } else {
+      return; // Return success to HomeKit - state is queued
+    }
+
+    // Try to execute, catch connection failures
+    try {
+      if (mode === 'off') {
         if (this.hvac.getPower() === 'off') {
-          this.platform.log.info('Sending power on');
-          await this.hvac.powerOn(this.platform.hvacAPI);
-          this.platform.log.debug('Sent Command', 'sendPowerOn');
-          // TODO: Investigate closing the loop and removing hard-coded delay.
-          // Note: Potentially there is a way to poll the power until it is updated before sending mode.
-          setTimeout(async () => {
+          this.platform.log.info('Skipping power off command - already off');
+        } else {
+          this.platform.log.info('Sending power off');
+          await this.hvac.powerOff(this.platform.hvacAPI);
+        }
+      } else {
+        if (this.hvac.getPower() === 'on' && this.hvac.getMode() === mode) {
+          this.platform.log.debug('Skipping Command');
+        } else {
+          if (this.hvac.getPower() === 'off') {
+            this.platform.log.info('Sending power on');
+            await this.hvac.powerOn(this.platform.hvacAPI);
+            this.platform.log.debug('Sent Command', 'sendPowerOn');
+            // TODO: Investigate closing the loop and removing hard-coded delay.
+            // Note: Potentially there is a way to poll the power until it is updated before sending mode.
+            setTimeout(async () => {
+              try {
+                this.platform.log.info('Setting mode to ' + mode);
+                await this.hvac.setMode(mode, this.platform.hvacAPI);
+              } catch (error) {
+                if (this.isConnectionError(error)) {
+                  this.platform.log.warn('Mode change failed due to connection loss - queueing for retry');
+                  this.platform.queueDesiredState(this.hvac.getMacAddress(), {power: 'on', mode});
+                  this.platform.connectionState = ConnectionState.DISCONNECTED;
+                } else {
+                  this.platform.log.error('Error setting mode:', error);
+                }
+              }
+            }, 10000);
+          } else {
             this.platform.log.info('Setting mode to ' + mode);
             await this.hvac.setMode(mode, this.platform.hvacAPI);
-          }, 10000);
-        } else {
-          this.platform.log.info('Setting mode to ' + mode);
-          await this.hvac.setMode(mode, this.platform.hvacAPI);
+          }
         }
       }
+    } catch (error) {
+      // Check if it's a connection error
+      if (this.isConnectionError(error)) {
+        this.platform.log.warn('Command failed due to connection loss - queueing for retry');
+        if (mode === 'off') {
+          this.platform.queueDesiredState(this.hvac.getMacAddress(), {power: 'off'});
+        } else {
+          this.platform.queueDesiredState(this.hvac.getMacAddress(), {power: 'on', mode});
+        }
+        this.platform.connectionState = ConnectionState.DISCONNECTED;
+        return; // Return success to HomeKit - state is queued
+      }
+      // Re-throw non-connection errors
+      throw error;
     }
   }
 
@@ -150,16 +191,41 @@ export class CieloPlatformAccessory {
 
     if (this.hvac.getTemperature() === apiTemperature) {
       this.platform.log.debug('Skipping Command');
-    } else {
-      const displayTemp = this.detectedTemperatureUnit === 'C'
-        ? `${apiTemperature} °C`
-        : `${apiTemperature} °F / ${this.convertFahrenheitToCelsius(apiTemperature)} °C`;
+      return;
+    }
 
+    const displayTemp = this.detectedTemperatureUnit === 'C'
+      ? `${apiTemperature} °C`
+      : `${apiTemperature} °F / ${this.convertFahrenheitToCelsius(apiTemperature)} °C`;
+
+    // Pre-emptive check: if not connected, queue immediately
+    if (this.platform.connectionState !== ConnectionState.CONNECTED) {
+      this.platform.log.warn('Not connected - queueing temperature command');
+      this.platform.queueDesiredState(this.hvac.getMacAddress(), {
+        temperature: apiTemperature.toString(),
+      });
+      return; // Return success to HomeKit - command is queued
+    }
+
+    // Try to execute, catch connection failures
+    try {
       this.platform.log.info('Setting temperature to ' + displayTemp);
       await this.hvac.setTemperature(
         apiTemperature.toString(),
         this.platform.hvacAPI,
       );
+    } catch (error) {
+      // Check if it's a connection error
+      if (this.isConnectionError(error)) {
+        this.platform.log.warn('Temperature command failed due to connection loss - queueing for retry');
+        this.platform.queueDesiredState(this.hvac.getMacAddress(), {
+          temperature: apiTemperature.toString(),
+        });
+        this.platform.connectionState = ConnectionState.DISCONNECTED;
+        return; // Return success to HomeKit - command is queued
+      }
+      // Re-throw non-connection errors
+      throw error;
     }
   }
 
@@ -257,7 +323,23 @@ export class CieloPlatformAccessory {
         return 0;
     }
   }
+
+  /**
+   * Check if an error is a connection error
+   */
+  private isConnectionError(error: unknown): boolean {
+    if (!error) {
+      return false;
+    }
+
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    // Check for common connection error patterns
+    return errorMessage.includes('Connection Closed') ||
+      errorMessage.includes('ECONNREFUSED') ||
+      errorMessage.includes('ETIMEDOUT') ||
+      errorMessage.includes('ENOTFOUND') ||
+      errorMessage.includes('WebSocket') ||
+      errorMessage.includes('Network');
+  }
 }
-// function setTimeout(arg0: () => Promise<void>, arg1: number) {
-//   throw new Error('Function not implemented.');
-// }

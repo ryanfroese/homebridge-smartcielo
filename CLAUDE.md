@@ -11,8 +11,8 @@ This is a Homebridge plugin that enables HomeKit control of Cielo mini-split the
 - Plugin name: `homebridge-cielo` (npm package name)
 
 **Requirements:**
-- Node.js: Version 18.0.0 or higher (tested with Node.js 22)
-- Homebridge: Version 1.3.5 or higher
+- Node.js: Version 18.20+, 20.18+, or 22.10+
+- Homebridge: v1.6.0 or v2.x (verified against Homebridge 2.4.0)
 
 ## Build and Development Commands
 
@@ -26,9 +26,19 @@ npm run lint
 # Watch mode - auto-rebuild and restart Homebridge on changes
 npm run watch
 
-# Pre-publish (runs lint + build)
+# Run the reconnect/queue regression tests (builds first)
+npm test
+
+# Pre-publish (runs lint + build + tests)
 npm run prepublishOnly
 ```
+
+**Publishing:** this package and its dependency `node-smartcielo-ws` (repo:
+`node-cielo`) are published to npm, which is how updates reach users. Publish
+the library first, then bump the plugin's dependency range and publish it.
+Always commit before publishing - versions 2.0.5 through 2.0.7 were published
+without being committed and the TypeScript sources were lost, requiring
+reconstruction from the published `dist/`.
 
 **Note:** The watch command uses nodemon to monitor `src/` and executes `tsc && homebridge -I -D` on changes. It also uses `npm link` to symlink the plugin for local testing.
 
@@ -40,7 +50,10 @@ npm run prepublishOnly
 - Main entry point implementing Homebridge's `DynamicPlatformPlugin`
 - Manages the WebSocket connection to Cielo API via `CieloAPIConnection`
 - Handles device discovery and registration
-- Implements automatic reconnection on communication errors (30s delay)
+- Reconnects on communication errors with exponential backoff (30s doubling to
+  a 30 minute ceiling), guarded so a burst of errors schedules only one attempt
+- Stops permanently (`ConnectionState.FATAL`) on failures retrying cannot fix,
+  such as an exhausted 2Captcha balance or a bad API key
 - Key responsibilities:
   - Establishes connection on `didFinishLaunching` event
   - Subscribes to all configured HVAC units by MAC address
@@ -68,12 +81,29 @@ npm run prepublishOnly
 4. Discovers devices and creates/restores accessories
 
 **Error Handling:**
-- Communication errors trigger automatic reconnection after 30 seconds
-- The error callback re-establishes connection and re-subscribes to all devices
+- The `didFinishLaunching` listener is async and registered with `.on()`, which
+  discards its promise. It MUST keep its try/catch: an uncaught rejection there
+  terminates the child bridge with exit code 1, Homebridge restarts the plugin,
+  and each restart buys another captcha solve (issue #10).
+- Communication errors schedule a single reconnect with exponential backoff.
+  `reconnectTimer` is the guard that stops concurrent reconnects, each of which
+  could buy its own captcha solve.
+- Permanent failures (zero 2Captcha balance, bad key) move the platform to
+  `FATAL` and stop retrying, so a topped-up balance is not immediately drained.
+
+**Offline Command Queue:**
+- Commands issued while disconnected are stored per device as a *desired state*
+  (`power` / `mode` / `temperature`) rather than a list of actions, and merge.
+  The previous queue held one action per MAC, so queueing a mode change
+  discarded the power-on that had to precede it.
+- On reconnect the queue applies power first, since the unit ignores mode and
+  temperature changes while it is off. Entries expire after 5 minutes and give
+  up after 3 attempts.
 
 **Command Sequencing:**
 - When powering on AND changing mode: power on first, wait 10 seconds, then set mode
-- This hard-coded delay exists due to API limitations (see TODO at `src/platformAccessory.ts:118`)
+- This hard-coded delay exists due to API limitations (see the TODO in
+  `setTargetHeatingCoolingState`)
 
 **Temperature Handling:**
 - API uses Fahrenheit internally
@@ -87,7 +117,8 @@ The plugin requires configuration via Homebridge UI or config.json:
 - `username`: Cielo account email
 - `password`: Cielo account password
 - `ip`: Public IP address (used as session identifier, despite the name)
-- `macAddresses`: Array of HVAC MAC addresses (12 uppercase hex chars, no colons)
+- `macAddresses`: **Optional.** Array of HVAC MAC addresses (12 uppercase hex
+  chars, no colons). Leave empty to auto-discover every HVAC on the account.
 
 Schema defined in `config.schema.json` with validation pattern: `^[A-F0-9]{12}$`
 
@@ -106,11 +137,17 @@ Schema defined in `config.schema.json` with validation pattern: `^[A-F0-9]{12}$`
 
 This is required because Cielo's API now uses reCAPTCHA v2 for authentication. The plugin automatically solves captchas using the 2Captcha service.
 
-**Cost:** Approximately $0.003 per captcha solve. The plugin only reconnects on actual connection failures (not token expiration), so typical monthly cost is very low:
-- **Stable connection:** $0.01-0.05/month (1-15 reconnects/month for network issues)
-- **Unstable connection:** $0.10-0.30/month (more frequent network drops)
+**Cost:** Approximately $0.003 per captcha solve. Since v2.1.0 the library
+spends a stored refresh token on reconnect and only pays for a captcha on a
+genuinely cold start, so a healthy install costs well under $0.10/month.
 
-The WebSocket connection stays alive even after the access token expires, so you're not being charged hourly as you might expect.
+The WebSocket connection stays alive even after the access token expires, so
+you're not being charged hourly as you might expect.
+
+**If costs spike, look for a loop.** Every historical case traced back to a
+connection that could never succeed (see issue #12: the WebSocket host was
+wrong, so login was paid for and the socket then 403'd) combined with an
+unguarded retry.
 
 ## Code Style
 
@@ -124,7 +161,10 @@ The WebSocket connection stays alive even after the access token expires, so you
 ## Dependencies
 
 **Runtime:**
-- `node-smartcielo-ws`: WebSocket API client for Cielo devices
-- `homebridge-config-ui-x`: Homebridge UI integration
+- `node-smartcielo-ws`: WebSocket API client for Cielo devices (repo: `node-cielo`)
+
+`homebridge-config-ui-x` was previously listed as a runtime dependency. It was
+never imported, and it pulled ~14MB into every install; it was removed in
+v2.1.0. Plugins do not depend on the Homebridge UI.
 
 **Note:** This plugin depends on `node-smartcielo-ws` which is a custom rewrite of the original Cielo API package. Changes to that package may affect this plugin's functionality.
