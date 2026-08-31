@@ -105,22 +105,17 @@ export class CieloPlatformAccessory {
     const mode = this.convertHeatingCoolingStateToMode(state);
     this.platform.log.info('setTargetHeatingCoolingState called - state:', state, 'mode:', mode, 'current power:', this.hvac.getPower());
 
-    // Pre-emptive check: if not connected, queue immediately
+    // Pre-emptive check: if not connected, record the intent and return.
+    // Fields merge, so a power-on and a mode change both survive - the old
+    // queue held one action per device and silently dropped the power-on.
     if (this.platform.connectionState !== ConnectionState.CONNECTED) {
       this.platform.log.warn('Not connected - queueing command');
       if (mode === 'off') {
-        this.platform.queueCommand(this.hvac.getMacAddress(), 'powerOff');
+        this.platform.queueDesiredState(this.hvac.getMacAddress(), {power: 'off'});
       } else {
-        // Queue both power on and mode change if needed
-        if (this.hvac.getPower() === 'off') {
-          this.platform.queueCommand(this.hvac.getMacAddress(), 'powerOn');
-          // The mode will be queued as well, replacing the powerOn
-          this.platform.queueCommand(this.hvac.getMacAddress(), 'setMode', {mode});
-        } else {
-          this.platform.queueCommand(this.hvac.getMacAddress(), 'setMode', {mode});
-        }
+        this.platform.queueDesiredState(this.hvac.getMacAddress(), {power: 'on', mode});
       }
-      return; // Return success to HomeKit - command is queued
+      return; // Return success to HomeKit - state is queued
     }
 
     // Try to execute, catch connection failures
@@ -149,7 +144,7 @@ export class CieloPlatformAccessory {
               } catch (error) {
                 if (this.isConnectionError(error)) {
                   this.platform.log.warn('Mode change failed due to connection loss - queueing for retry');
-                  this.platform.queueCommand(this.hvac.getMacAddress(), 'setMode', {mode});
+                  this.platform.queueDesiredState(this.hvac.getMacAddress(), {power: 'on', mode});
                   this.platform.connectionState = ConnectionState.DISCONNECTED;
                 } else {
                   this.platform.log.error('Error setting mode:', error);
@@ -167,17 +162,12 @@ export class CieloPlatformAccessory {
       if (this.isConnectionError(error)) {
         this.platform.log.warn('Command failed due to connection loss - queueing for retry');
         if (mode === 'off') {
-          this.platform.queueCommand(this.hvac.getMacAddress(), 'powerOff');
+          this.platform.queueDesiredState(this.hvac.getMacAddress(), {power: 'off'});
         } else {
-          if (this.hvac.getPower() === 'off') {
-            this.platform.queueCommand(this.hvac.getMacAddress(), 'powerOn');
-            this.platform.queueCommand(this.hvac.getMacAddress(), 'setMode', {mode});
-          } else {
-            this.platform.queueCommand(this.hvac.getMacAddress(), 'setMode', {mode});
-          }
+          this.platform.queueDesiredState(this.hvac.getMacAddress(), {power: 'on', mode});
         }
         this.platform.connectionState = ConnectionState.DISCONNECTED;
-        return; // Return success to HomeKit - command is queued
+        return; // Return success to HomeKit - state is queued
       }
       // Re-throw non-connection errors
       throw error;
@@ -211,7 +201,7 @@ export class CieloPlatformAccessory {
     // Pre-emptive check: if not connected, queue immediately
     if (this.platform.connectionState !== ConnectionState.CONNECTED) {
       this.platform.log.warn('Not connected - queueing temperature command');
-      this.platform.queueCommand(this.hvac.getMacAddress(), 'setTemperature', {
+      this.platform.queueDesiredState(this.hvac.getMacAddress(), {
         temperature: apiTemperature.toString(),
       });
       return; // Return success to HomeKit - command is queued
@@ -228,7 +218,7 @@ export class CieloPlatformAccessory {
       // Check if it's a connection error
       if (this.isConnectionError(error)) {
         this.platform.log.warn('Temperature command failed due to connection loss - queueing for retry');
-        this.platform.queueCommand(this.hvac.getMacAddress(), 'setTemperature', {
+        this.platform.queueDesiredState(this.hvac.getMacAddress(), {
           temperature: apiTemperature.toString(),
         });
         this.platform.connectionState = ConnectionState.DISCONNECTED;
