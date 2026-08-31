@@ -45,6 +45,7 @@
     "dist",
     "config.schema.json",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ]
 }
