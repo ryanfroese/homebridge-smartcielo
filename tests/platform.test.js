@@ -334,9 +334,51 @@ async function testNonErrorRejectionIsReadable() {
   }
 }
 
+/*
+ * Homebridge verification requires that a plugin "must successfully install and
+ * not start unless it is configured". Beyond the rule, an unconfigured start
+ * would pay for a captcha solve only to discover it has no credentials.
+ */
+async function testDoesNotStartWhenUnconfigured() {
+  const log = makeLog();
+  const api = makeHomebridgeApi();
+  let connectAttempted = false;
+
+  const platform = new CieloHomebridgePlatform(log, {platform: 'cielo'}, api);
+  platform.hvacAPI = {
+    hvacs: [], setLogger() {},
+    async establishConnectionWithAutoSolve() { connectAttempted = true; },
+    async subscribeToHVACs() {},
+  };
+
+  api.emit('didFinishLaunching');
+  await new Promise((r) => setTimeout(r, 50));
+
+  assert.strictEqual(connectAttempted, false,
+    'an unconfigured plugin must not attempt to connect - doing so buys a captcha to learn nothing');
+  assert.strictEqual(platform.connectionState, ConnectionState.FATAL,
+    'an unconfigured plugin should settle in FATAL rather than retrying');
+  assert.ok(/not configured/i.test(log.text()),
+    'the operator must be told which settings are missing');
+  assert.ok(/Username|Password|2Captcha/.test(log.text()),
+    'the message should name the missing settings');
+}
+
+async function testStartsWhenFullyConfigured() {
+  const {platform, api, calls} = makePlatform(() => Promise.resolve());
+  api.emit('didFinishLaunching');
+  await new Promise((r) => setTimeout(r, 50));
+  assert.ok(calls.establish > 0, 'a fully configured plugin must still connect');
+  if (platform.reconnectTimer) {
+    clearTimeout(platform.reconnectTimer);
+  }
+}
+
 (async () => {
   console.log('platform reconnect/queue tests\n');
   await check('startup failure does not crash the bridge (issue #10)', testLaunchFailureDoesNotReject);
+  await check('does not start when unconfigured', testDoesNotStartWhenUnconfigured);
+  await check('does start when fully configured', testStartsWhenFullyConfigured);
   await check('error burst schedules a single reconnect', testBurstOfErrorsSchedulesOneReconnect);
   await check('reconnect backoff grows exponentially', testReconnectBackoffGrows);
   await check('zero captcha balance stops retrying', testZeroBalanceStopsRetrying);

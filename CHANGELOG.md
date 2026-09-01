@@ -5,6 +5,17 @@ All notable changes to `homebridge-cielo` are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.1] - 2026-08-31
+
+### Fixed
+
+- Login failures now say why. They previously reported `Login failed: Unknown
+  error`, which made a wrong password indistinguishable from an outage; you now
+  see e.g. `Login failed: 403: forbidden`.
+- The plugin no longer starts when it has not been configured. It now logs which
+  settings are missing and stops, instead of attempting to connect — which would
+  pay for a captcha solve only to discover it has no credentials.
+
 ## [2.2.0] - 2026-08-31
 
 **If the plugin stopped connecting, this is the release that fixes it. Please upgrade.**

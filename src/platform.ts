@@ -147,6 +147,19 @@ export class CieloHomebridgePlatform implements DynamicPlatformPlugin {
     // in order to ensure they weren't added to homebridge already. This event can also be used
     // to start discovery of new accessories.
     this.api.on('didFinishLaunching', async () => {
+      // Do nothing at all until the plugin has been configured. Starting an
+      // unconfigured plugin would fail anyway, but it would first pay for a
+      // captcha solve to find that out.
+      const missing = this.missingConfig();
+      if (missing.length > 0) {
+        this.connectionState = ConnectionState.FATAL;
+        this.log.warn(
+          `Not starting: ${missing.join(', ')} not configured. ` +
+            'Set them in the Homebridge UI under Plugins > Homebridge Cielo > Settings.',
+        );
+        return;
+      }
+
       // This listener is async, and `.on()` discards the promise it returns.
       // Without this catch any rejection became an UnhandledPromiseRejection,
       // which terminated the child bridge with exit code 1; Homebridge then
@@ -166,6 +179,23 @@ export class CieloHomebridgePlatform implements DynamicPlatformPlugin {
         this.reconnectTimer = undefined;
       }
     });
+  }
+
+  /**
+   * Required settings that are absent or blank.
+   */
+  private missingConfig(): string[] {
+    const required: Array<[string, string]> = [
+      ['username', 'Username'],
+      ['password', 'Password'],
+      ['twocaptcha_api_key', '2Captcha API key'],
+    ];
+    return required
+      .filter(([key]) => {
+        const value = this.config[key];
+        return typeof value !== 'string' || value.trim().length === 0;
+      })
+      .map(([, label]) => label);
   }
 
   /**
