@@ -12,6 +12,9 @@ import {PLATFORM_NAME, PLUGIN_NAME} from './settings';
 import {CieloPlatformAccessory} from './platformAccessory';
 import {CieloAPIConnection} from 'node-smartcielo-ws';
 
+import * as fs from 'fs';
+import * as path from 'path';
+
 /**
  * Connection state tracking
  */
@@ -208,13 +211,44 @@ export class CieloHomebridgePlatform implements DynamicPlatformPlugin {
     this.connectionState = ConnectionState.CONNECTING;
     this.log.debug('Connecting to Cielo API...');
 
-    await this.hvacAPI.establishConnectionWithAutoSolve(
-      this.config.username,
-      this.config.password,
-      this.config.ip,
-      undefined,
-      {apiKey: this.config.twocaptcha_api_key},
-    );
+    // A persisted refresh token from a previous run authenticates without
+    // spending a captcha solve. refreshAccessToken() both validates the token
+    // and rotates it, so it is re-persisted below after either path.
+    let authenticated = false;
+    const tokenPath = path.join(this.api.user.persistPath(), 'cielo-refresh-token');
+    try {
+      if (fs.existsSync(tokenPath)) {
+        const stored = fs.readFileSync(tokenPath, 'utf8').trim();
+        if (stored) {
+          this.log.info('Stored refresh token found, attempting captcha-free login');
+          await this.hvacAPI.refreshAccessToken(stored);
+          authenticated = true;
+        }
+      }
+    } catch (err) {
+      this.log.warn(`Refresh-token login failed, falling back to captcha: ${describeError(err)}`);
+    }
+
+    if (!authenticated) {
+      await this.hvacAPI.establishConnectionWithAutoSolve(
+        this.config.username,
+        this.config.password,
+        this.config.ip,
+        undefined,
+        {apiKey: this.config.twocaptcha_api_key as string},
+      );
+    }
+
+    // Persist the (possibly rotated) refresh token so the next restart
+    // also skips the captcha.
+    try {
+      const refreshToken = this.hvacAPI.getRefreshToken?.();
+      if (refreshToken) {
+        fs.writeFileSync(tokenPath, refreshToken, {mode: 0o600});
+      }
+    } catch (err) {
+      this.log.debug(`Could not persist refresh token: ${describeError(err)}`);
+    }
 
     // Subscribe to HVACs (auto-discovers all devices if macAddresses not specified)
     await this.hvacAPI.subscribeToHVACs(this.config.macAddresses);
